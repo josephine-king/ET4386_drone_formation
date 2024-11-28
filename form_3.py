@@ -10,6 +10,8 @@ def load_and_initialize(file_path, num_agents, connectivity, control_gain, dt, t
     except KeyError:
         raise KeyError("Desired positions 'z_star' not found in the data.")
     
+    noise_cov = data['R'].reshape(2,2)
+
     # Initialize adjacency matrix based on connectivity
     if connectivity == 'all':
         adjacency = np.ones((num_agents, num_agents)) - np.eye(num_agents)
@@ -49,10 +51,9 @@ def load_and_initialize(file_path, num_agents, connectivity, control_gain, dt, t
     traces = [np.empty((0, 2)) for _ in range(num_agents)]
     mse_history = []  # Initialize MSE history list
     
-    return desired_offsets, positions, traces, steps, control_gain, adjacency, mse_history
+    return desired_offsets, noise_cov, positions, traces, steps, control_gain, adjacency, mse_history
 
-def compute_control(positions, desired_offsets, adjacency, gain):
-    NOISE_STD = 0.5  # Standard deviation of the Gaussian noise
+def compute_control(positions, desired_offsets, adjacency, gain, noise_cov, noise_en):
     control_inputs = np.zeros_like(positions)
     num_agents = len(positions)
     for i in range(num_agents):
@@ -60,7 +61,7 @@ def compute_control(positions, desired_offsets, adjacency, gain):
             if adjacency[i, j]:
                 # Compute the relative position error
                 rel_pos_error = (positions[i] - positions[j]) - desired_offsets[(i, j)]
-                noise = np.random.normal(0, NOISE_STD, size=2)
+                noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if noise_en else 0
                 rel_pos_error_noisy = rel_pos_error + noise
                 # Update control input based on the relative position error
                 control_inputs[i] -= gain * rel_pos_error_noisy
@@ -123,15 +124,18 @@ def main():
     TOTAL_TIME = 3  # seconds
     CONTROL_GAIN = 1.0
     CONNECTIVITY = 'project'  # Options: 'all', 'nearest', 'project'
+    NOISE_EN = True
 
     # === Load Data and Initialize ===
     try:
-        desired_offsets, positions, traces, steps, gain, adjacency, mse_history = load_and_initialize(
+        desired_offsets, noise_cov, positions, traces, steps, gain, adjacency, mse_history = load_and_initialize(
             DATA_FILE, NUM_AGENTS, CONNECTIVITY, CONTROL_GAIN, DT, TOTAL_TIME
         )
     except Exception as e:
         print(f"Initialization Error: {e}")
         exit(1)
+
+    print(noise_cov)
 
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y = setup_plot(NUM_AGENTS, adjacency)
@@ -171,7 +175,7 @@ def main():
         current_time = step * DT
 
         # Compute control inputs
-        control_inputs = compute_control(positions, desired_offsets, adjacency, gain)
+        control_inputs = compute_control(positions, desired_offsets, adjacency, gain, noise_cov, NOISE_EN)
 
         # Update positions
         positions += control_inputs * DT

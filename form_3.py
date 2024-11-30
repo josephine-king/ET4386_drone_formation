@@ -2,15 +2,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 
-def load_and_initialize(file_path, num_agents, connectivity, control_gain, dt, total_time):
+# === Global Variables ===
+DATA_FILE = 'data.mat'
+NUM_AGENTS = 7
+DT = 0.1
+TOTAL_TIME = 120  # seconds
+CONNECTIVITY = 'project'  # Options: 'all', 'nearest', 'project'
+NOISE_EN = True
+DEBUG_PRINTS = True
+
+def load_and_initialize(file_path, num_agents, connectivity, dt, total_time):
     # Load desired positions from the data file
     data = loadmat(file_path)
     try:
-        z_star = data['z_star'].reshape(num_agents, 2)
+        desired_positions = data['z_star'].reshape(num_agents, 2)
     except KeyError:
         raise KeyError("Desired positions 'z_star' not found in the data.")
     
     noise_cov = data['R'].reshape(2,2)
+    weights = data['L'].reshape(num_agents, num_agents)
 
     # Initialize adjacency matrix based on connectivity
     if connectivity == 'all':
@@ -35,43 +45,34 @@ def load_and_initialize(file_path, num_agents, connectivity, control_gain, dt, t
         else:
             raise ValueError("Unsupported connectivity type. Choose 'all', 'nearest', or 'project'.")
     
-    # Debug: Print adjacency matrix
-    print("Adjacency Matrix:")
-    print(adjacency)
-    
-    # Compute desired relative positions between connected agents
-    desired_offsets = {}
-    for i in range(num_agents):
-        for j in range(num_agents):
-            if adjacency[i, j]:
-                desired_offsets[(i, j)] = z_star[i] - z_star[j]
-    
-    positions = np.random.rand(num_agents, 2) * 10  # Random initial positions
+    positions = data['z'].reshape(num_agents, 2)  # Random initial positions
     steps = int(total_time / dt)
     traces = [np.empty((0, 2)) for _ in range(num_agents)]
     mse_history = []  # Initialize MSE history list
     
-    return desired_offsets, noise_cov, positions, traces, steps, control_gain, adjacency, mse_history
+    return desired_positions, positions, noise_cov, weights, traces, steps, adjacency, mse_history
 
-def compute_control(positions, desired_offsets, adjacency, gain, noise_cov, noise_en):
+def compute_control(positions, adjacency, weights, noise_cov):
     control_inputs = np.zeros_like(positions)
     num_agents = len(positions)
     for i in range(num_agents):
         for j in range(num_agents):
             if adjacency[i, j]:
-                # Compute the relative position error
-                rel_pos_error = (positions[i] - positions[j]) - desired_offsets[(i, j)]
-                noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if noise_en else 0
-                rel_pos_error_noisy = rel_pos_error + noise
+                # Generate noise
+                noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if NOISE_EN else 0
+                # Compute the position difference between the two agents 
+                position_diff = positions[i] - positions[j] + noise
+                weighted_position_diff = position_diff * weights[i, j]
                 # Update control input based on the relative position error
-                control_inputs[i] -= gain * rel_pos_error_noisy
+                control_inputs[i] += weighted_position_diff
+
     return control_inputs
 
-def compute_mse(positions, desired_offsets, adjacency):
+def compute_mse(positions, desired_positions):
     squared_errors = []
-    for (i, j), offset in desired_offsets.items():
-        rel_pos_error = (positions[i] - positions[j]) - offset
-        squared_errors.append(np.linalg.norm(rel_pos_error)**2)
+    for agent in range(NUM_AGENTS):
+        error = positions[agent] - desired_positions[agent]
+        squared_errors.append(np.linalg.norm(error)**2)
     mse = np.mean(squared_errors) if squared_errors else 0
     return mse
 
@@ -117,29 +118,21 @@ def setup_plot(num_agents, adjacency):
     return fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y
 
 def main():
-    # === Configuration ===
-    DATA_FILE = 'data.mat'
-    NUM_AGENTS = 7
-    DT = 0.01
-    TOTAL_TIME = 3  # seconds
-    CONTROL_GAIN = 1.0
-    CONNECTIVITY = 'project'  # Options: 'all', 'nearest', 'project'
-    NOISE_EN = True
 
     # === Load Data and Initialize ===
     try:
-        desired_offsets, noise_cov, positions, traces, steps, gain, adjacency, mse_history = load_and_initialize(
-            DATA_FILE, NUM_AGENTS, CONNECTIVITY, CONTROL_GAIN, DT, TOTAL_TIME
+        desired_positions, positions, noise_cov, weights, traces, steps, adjacency, mse_history = load_and_initialize(
+            DATA_FILE, NUM_AGENTS, CONNECTIVITY, DT, TOTAL_TIME
         )
     except Exception as e:
         print(f"Initialization Error: {e}")
         exit(1)
 
-    print(noise_cov)
-
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y = setup_plot(NUM_AGENTS, adjacency)
     scatter.set_offsets(positions)
+    # Plot desired positions in grey
+    ax1.scatter(desired_positions[3:7, 0], desired_positions[3:7, 1], c='grey', s=30, marker='x', label="Desired Positions")
 
     # Initialize connection lines with initial positions
     for connection in connection_lines:
@@ -175,16 +168,26 @@ def main():
         current_time = step * DT
 
         # Compute control inputs
-        control_inputs = compute_control(positions, desired_offsets, adjacency, gain, noise_cov, NOISE_EN)
+        control_inputs = compute_control(positions, adjacency, weights, noise_cov)
 
         # Update positions
-        positions += control_inputs * DT
+        for agent in [3,4,5,6]:
+            if (DEBUG_PRINTS):
+                print(f"Agent: {agent}, old position: {positions[agent]}, new position: {positions[agent]+control_inputs[agent]}, desired position: {desired_positions[agent]}")
+            positions[agent] += control_inputs[agent] * DT
+            
 
         # Update traces
         update_traces(traces, positions)
 
         # Update scatter plot
         scatter.set_offsets(positions)
+
+        max_range = max(np.abs(positions).max(), 1e-3)  # Prevent zero range errors
+        ax1.set_xlim(-max_range, max_range+0.5)
+        ax1.set_ylim(-max_range, max_range)
+        ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
+        ax1.figure.canvas.draw()
 
         # Update traces
         for idx, line in enumerate(lines):
@@ -197,7 +200,7 @@ def main():
             line.set_data([positions[i, 0], positions[j, 0]], [positions[i, 1], positions[j, 1]])
 
         # === MSE Calculation ===
-        mse = compute_mse(positions, desired_offsets, adjacency)
+        mse = compute_mse(positions, desired_positions)
         mse_history.append(mse)
         mse_data_x.append(current_time)
         mse_data_y.append(mse)
@@ -206,6 +209,7 @@ def main():
         mse_line.set_data(mse_data_x, mse_data_y)
         
         # Adjust MSE plot limits dynamically if necessary
+        ax2.set_ylim(0,5)
         if current_time > ax2.get_xlim()[1]:
             ax2.set_xlim(0, current_time + TOTAL_TIME * 0.1)  # Extend X-axis by 10% of TOTAL_TIME
             ax2.figure.canvas.draw()

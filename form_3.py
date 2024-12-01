@@ -1,17 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
+from Estimator import Estimator
 
 # === Global Variables ===
 DATA_FILE = 'data.mat'
 NUM_AGENTS = 7
+NUM_EDGES = 12
 DT = 0.1
 TOTAL_TIME = 120  # seconds
-CONNECTIVITY = 'project'  # Options: 'all', 'nearest', 'project'
 NOISE_EN = True
-DEBUG_PRINTS = True
+DEBUG_PRINTS = False
 
-def load_and_initialize(file_path, num_agents, connectivity, dt, total_time):
+def load_and_initialize(file_path, num_agents, dt, total_time):
     # Load desired positions from the data file
     data = loadmat(file_path)
     try:
@@ -23,49 +24,44 @@ def load_and_initialize(file_path, num_agents, connectivity, dt, total_time):
     weights = data['L'].reshape(num_agents, num_agents)
 
     # Initialize adjacency matrix based on connectivity
-    if connectivity == 'all':
-        adjacency = np.ones((num_agents, num_agents)) - np.eye(num_agents)
-    else:
-        adjacency = np.zeros((num_agents, num_agents))
-        if connectivity == 'nearest':
-            for i in range(num_agents):
-                adjacency[i][(i + 1) % num_agents] = 1
-                adjacency[i][(i - 1) % num_agents] = 1
-        elif connectivity == 'project':
-            connections = [
-                (0,1),(0,2),(0,3),(0,4),
-                (1,3),(1,6),
-                (2,4),(2,5),
-                (3,5),(3,4),
-                (4,6),(5,6),
-            ]
-            for i, j in connections:
-                adjacency[i, j] = 1
-                adjacency[j, i] = 1
-        else:
-            raise ValueError("Unsupported connectivity type. Choose 'all', 'nearest', or 'project'.")
-    
+    adjacency = np.zeros((num_agents, num_agents))
+    connections = [
+        (0,1),(0,2),(0,3),(0,4),
+        (1,3),(1,6),
+        (2,4),(2,5),
+        (3,5),(3,4),
+        (4,6),(5,6),
+        (1,0),(2,0),(3,0),(4,0),
+        (3,1),(6,1),
+        (4,2),(5,2),
+        (5,3),(4,3),
+        (6,4),(6,5),
+    ]
+    for i, j in connections:
+        adjacency[i, j] = 1
+
     positions = data['z'].reshape(num_agents, 2)  # Random initial positions
     steps = int(total_time / dt)
     traces = [np.empty((0, 2)) for _ in range(num_agents)]
     mse_history = []  # Initialize MSE history list
     
-    return desired_positions, positions, noise_cov, weights, traces, steps, adjacency, mse_history
+    return desired_positions, positions, noise_cov, weights, traces, steps, connections, adjacency, mse_history
 
-def compute_control(positions, adjacency, weights, noise_cov):
-    control_inputs = np.zeros_like(positions)
-    num_agents = len(positions)
-    for i in range(num_agents):
-        for j in range(num_agents):
-            if adjacency[i, j]:
-                # Generate noise
-                noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if NOISE_EN else 0
-                # Compute the position difference between the two agents 
-                position_diff = positions[i] - positions[j] + noise
-                weighted_position_diff = position_diff * weights[i, j]
-                # Update control input based on the relative position error
-                control_inputs[i] += weighted_position_diff
+def get_measurements(positions, connections, noise_cov):
+    measurements = np.zeros((len(connections), 2))
+    for m in range(len(measurements)):
+        (i,j) = connections[m]
+        # Generate noise
+        noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if NOISE_EN else 0
+        # Compute the position difference between the two agents and add noise
+        measurements[m] = positions[i] - positions[j] + noise
+    return measurements
 
+def compute_control(estimate, connections, weights):
+    control_inputs = np.zeros((NUM_AGENTS, 2))
+    for i,j in connections:
+        weighted_position_diff = (estimate[i] - estimate[j]) * weights[i, j]
+        control_inputs[i] += weighted_position_diff
     return control_inputs
 
 def compute_mse(positions, desired_positions):
@@ -121,12 +117,15 @@ def main():
 
     # === Load Data and Initialize ===
     try:
-        desired_positions, positions, noise_cov, weights, traces, steps, adjacency, mse_history = load_and_initialize(
-            DATA_FILE, NUM_AGENTS, CONNECTIVITY, DT, TOTAL_TIME
+        desired_positions, positions, noise_cov, weights, traces, steps, connections, adjacency, mse_history = load_and_initialize(
+            DATA_FILE, NUM_AGENTS, DT, TOTAL_TIME
         )
     except Exception as e:
         print(f"Initialization Error: {e}")
         exit(1)
+
+    # Set up estimator 
+    estimator = Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions)
 
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y = setup_plot(NUM_AGENTS, adjacency)
@@ -167,8 +166,11 @@ def main():
 
         current_time = step * DT
 
+        # Get measurements
+        measurements = get_measurements(positions, connections, noise_cov)
+        positions_estimate = estimator.estimate(measurements)
         # Compute control inputs
-        control_inputs = compute_control(positions, adjacency, weights, noise_cov)
+        control_inputs = compute_control(positions_estimate, connections, weights)
 
         # Update positions
         for agent in [3,4,5,6]:
@@ -176,7 +178,6 @@ def main():
                 print(f"Agent: {agent}, old position: {positions[agent]}, new position: {positions[agent]+control_inputs[agent]}, desired position: {desired_positions[agent]}")
             positions[agent] += control_inputs[agent] * DT
             
-
         # Update traces
         update_traces(traces, positions)
 

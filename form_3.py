@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator
+from Estimator import Estimator, SLS_Estimator, BLUE_Estimator
 
 # === Global Variables ===
 DATA_FILE = 'data.mat'
@@ -11,6 +11,7 @@ DT = 0.1
 TOTAL_TIME = 120  # seconds
 NOISE_EN = True
 DEBUG_PRINTS = False
+T = 20
 
 def load_and_initialize(file_path, num_agents, dt, total_time):
     # Load desired positions from the data file
@@ -125,7 +126,7 @@ def main():
         exit(1)
 
     # Set up estimator 
-    estimator = Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions)
+    estimator = Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T)
 
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y = setup_plot(NUM_AGENTS, adjacency)

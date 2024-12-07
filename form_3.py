@@ -1,14 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, SLS_Estimator, BLUE_Estimator
+from Estimator import Estimator, SLS_Estimator, BLUE_Estimator,KalmanFilter2D,Kalman
 
 # === Global Variables ===
 DATA_FILE = 'data.mat'
 NUM_AGENTS = 7
 NUM_EDGES = 12
-DT = 0.1
-TOTAL_TIME = 120  # seconds
+DT = 0.2
+TOTAL_TIME = 180  # seconds
 NOISE_EN = True
 DEBUG_PRINTS = False
 T = 20
@@ -48,15 +48,18 @@ def load_and_initialize(file_path, num_agents, dt, total_time):
     
     return desired_positions, positions, noise_cov, weights, traces, steps, connections, adjacency, mse_history
 
-def get_measurements(positions, connections, noise_cov):
-    measurements = np.zeros((len(connections), 2))
-    for m in range(len(measurements)):
-        (i,j) = connections[m]
-        # Generate noise
-        noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if NOISE_EN else 0
-        # Compute the position difference between the two agents and add noise
-        measurements[m] = positions[i] - positions[j] + noise
+#get raw relative position data.
+def get_measurements_2(positions, connections, noise_cov,T):
+    measurements = np.zeros((T,len(connections), 2))
+    for t in range(len(measurements)):
+        for m in range(len(measurements[t])):
+            (i,j) = connections[m]
+            # Generate noise
+            noise = np.random.multivariate_normal(np.zeros_like(positions[i]), noise_cov) if NOISE_EN else 0
+            # Compute the position difference between the two agents and add noise
+            measurements[t][m] = positions[i] - positions[j] + noise
     return measurements
+
 
 def compute_control(estimate, connections, weights):
     control_inputs = np.zeros((NUM_AGENTS, 2))
@@ -126,7 +129,20 @@ def main():
         exit(1)
 
     # Set up estimator 
-    estimator = Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T)
+    estimator = BLUE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T)
+    # # # Create a list to hold the Kalman Filter instances
+    # estimators = []
+
+    # # Initialize each estimator with its respective initial state
+    # for state in range(NUM_AGENTS):
+    #     kf = KalmanFilter2D(
+    #         initial_state=positions[state,:],
+    #         initial_covariance=noise_cov.copy(),
+    #         process_noise_cov=np.eye(2)*.01,
+    #         measurement_noise_cov=noise_cov
+    #     )
+    #     estimators.append(kf)
+
 
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y = setup_plot(NUM_AGENTS, adjacency)
@@ -158,7 +174,8 @@ def main():
 
     fig1.canvas.mpl_connect('key_press_event', on_key)
     fig2.canvas.mpl_connect('key_press_event', on_key)
-
+    positions_estimate = np.zeros((7,2))
+    control_inputs = np.zeros((7,2))
     # === Simulation Loop ===
     for step in range(steps):
         if not running:
@@ -168,28 +185,24 @@ def main():
         current_time = step * DT
 
         # Get measurements
-        measurements = get_measurements(positions, connections, noise_cov)
-        positions_estimate = estimator.estimate(measurements)
-        # Compute control inputs
-        control_inputs = compute_control(positions_estimate, connections, weights)
+        measurements_block = get_measurements_2(positions, connections, noise_cov,T)
+        estimator.process_data(measurements_block)
+        estimate = estimator.estimate(measurements_block)
+        control_inputs = compute_control(estimate, connections, weights)
 
         # Update positions
         for agent in [3,4,5,6]:
             if (DEBUG_PRINTS):
-                print(f"Agent: {agent}, old position: {positions[agent]}, new position: {positions[agent]+control_inputs[agent]}, desired position: {desired_positions[agent]}")
+                print(f"Agent: {agent}, old position: {positions[agent]}, new position: {positions_estimate[agent]+control_inputs[agent]}, desired position: {desired_positions[agent]}")
             positions[agent] += control_inputs[agent] * DT
-            
+
+
         # Update traces
         update_traces(traces, positions)
 
         # Update scatter plot
         scatter.set_offsets(positions)
 
-        max_range = max(np.abs(positions).max(), 1e-3)  # Prevent zero range errors
-        ax1.set_xlim(-max_range, max_range+0.5)
-        ax1.set_ylim(-max_range, max_range)
-        ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
-        ax1.figure.canvas.draw()
 
         # Update traces
         for idx, line in enumerate(lines):
@@ -206,26 +219,33 @@ def main():
         mse_history.append(mse)
         mse_data_x.append(current_time)
         mse_data_y.append(mse)
-
-        # Update MSE plot data
-        mse_line.set_data(mse_data_x, mse_data_y)
         
-        # Adjust MSE plot limits dynamically if necessary
-        ax2.set_ylim(0,5)
-        if current_time > ax2.get_xlim()[1]:
-            ax2.set_xlim(0, current_time + TOTAL_TIME * 0.1)  # Extend X-axis by 10% of TOTAL_TIME
-            ax2.figure.canvas.draw()
-        if mse > ax2.get_ylim()[1]:
-            # ax2.set_ylim(0, mse * 1.1)  # Extend Y-axis to 10% above current MSE
-            ax2.figure.canvas.draw()
+    max_range = max(np.abs(positions).max(), 1e-3)  # Prevent zero range errors
+    ax1.set_xlim(-max_range, max_range+0.5)
+    ax1.set_ylim(-max_range, max_range)
+    ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
+    ax1.figure.canvas.draw()
+    # Redraw the plots
+    fig1.canvas.draw()
+    
+    # plt.pause(0.001)
 
-        # Redraw the plots
-        fig1.canvas.draw()
-        fig2.canvas.draw()
-        plt.pause(0.001)
-
+    # Update MSE plot data
+    mse_line.set_data(mse_data_x, mse_data_y)
+    
+    # Adjust MSE plot limits dynamically if necessary
+    ax2.set_ylim(0,5)
+    if current_time > ax2.get_xlim()[1]:
+        ax2.set_xlim(0, current_time + TOTAL_TIME * 0.1)  # Extend X-axis by 10% of TOTAL_TIME
+        ax2.figure.canvas.draw()
+    if mse > ax2.get_ylim()[1]:
+        # ax2.set_ylim(0, mse * 1.1)  # Extend Y-axis to 10% above current MSE
+        ax2.figure.canvas.draw()
+    fig2.canvas.draw()
     # === Final Visualization ===
     plt.show()
-
+    print("total mse: ",sum(mse_history))
 if __name__ == "__main__":
     main()
+
+

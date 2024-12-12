@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, SLS_Estimator, BLUE_Estimator,KalmanFilter2D,Kalman
+from Estimator import Estimator, LS_Estimator, BLUE_Estimator, BLUE_Estimator2, KalmanFilter2D, Kalman
 
 # === Global Variables ===
 DATA_FILE = 'data.mat'
@@ -9,9 +9,9 @@ NUM_AGENTS = 7
 NUM_EDGES = 12
 DT = 0.2
 TOTAL_TIME = 180  # seconds
-NOISE_EN = True
+NOISE_EN = False
 DEBUG_PRINTS = False
-T = 20
+T = 1
 
 def load_and_initialize(file_path, num_agents, dt, total_time):
     # Load desired positions from the data file
@@ -49,7 +49,7 @@ def load_and_initialize(file_path, num_agents, dt, total_time):
     return desired_positions, positions, noise_cov, weights, traces, steps, connections, adjacency, mse_history
 
 #get raw relative position data.
-def get_measurements_2(positions, connections, noise_cov,T):
+def get_T_measurements(positions, connections, noise_cov,T):
     measurements = np.zeros((T,len(connections), 2))
     for t in range(len(measurements)):
         for m in range(len(measurements[t])):
@@ -185,7 +185,7 @@ def main():
         current_time = step * DT
 
         # Get measurements
-        measurements_block = get_measurements_2(positions, connections, noise_cov,T)
+        measurements_block = get_T_measurements(positions, connections, noise_cov,T)
         estimator.process_data(measurements_block)
         estimate = estimator.estimate(measurements_block)
         control_inputs = compute_control(estimate, connections, weights)

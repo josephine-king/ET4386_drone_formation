@@ -25,37 +25,22 @@ class Estimator:
             self.h[2*idx+1,2*j+1] = -1
         
         self.h_inv = np.linalg.pinv(self.h)
-
         self.h_trans = np.transpose(self.h)
-        # initialize the H matrix as h
-        self.H = self.h
+
+        one_vec = np.ones((self.T,1))
 
         # noise covariance matrix
         self.C0 = np.kron(np.identity(self.num_edges*2), noise_cov)
         self.C0_inv = np.linalg.inv(self.C0)
-        self.C = self.C0
-        self.C_inv = self.C0_inv
+
+        self.H = np.kron(one_vec, self.h)
+        self.H_trans = np.transpose(self.H)
+        self.C = np.kron(np.identity(T), self.C0)
+        self.C_inv = np.linalg.inv(self.C)
 
         self.measurements_block = np.zeros((T,num_agents,2))
 
         self.x_n = np.zeros((self.T,num_agents,2))
-    # def add_measurement(self, measurement):
-    #     measurement = np.reshape(measurement, (self.num_edges*2*2, 1), order="C")
-    #     self.past_measurements.append(measurement)
-    #     if (len(self.past_measurements) > self.T):
-    #         self.past_measurements.pop(0)
-    #     else: 
-    #         self.H = np.kron(np.identity(len(self.past_measurements)), self.h)
-    #         self.H_trans = np.transpose(self.H)
-    #         self.C = np.kron(np.identity(len(self.past_measurements)), self.C0)
-    #         self.C_inv = np.linalg.inv(self.C)
-
-    #     return measurement
-
-    # def add_estimate(self, estimate):
-    #     self.past_estimates.append(estimate)
-    #     if (len(self.past_estimates) > self.T):
-    #         self.past_estimates.pop(0)
 
     #convert measurements to positions.
     def process_data(self,measurement_block):
@@ -67,37 +52,61 @@ class Estimator:
             
     #return estimate
     def estimate(self):
-        #average - benchmark
+        # average - benchmark
         x_tilda = np.zeros((self.num_agents,2))
         for t in range(self.T):
             x_tilda+=self.x_n[t]
         x_tilda= x_tilda/self.T
         return x_tilda
 
+class LS_Estimator(Estimator):
+    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
+        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T) 
+
+    def estimate(self, measurements):
+        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
+        pseudo_inv_H = np.linalg.pinv(self.H)
+        current_estimate = np.matmul(pseudo_inv_H, measurements)
+        return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
+
+
 # Attempt at an SLS Estimator. Currently not working at all
 class SLS_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
         super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T) 
-        self.sigma = np.linalg.inv(np.matmul(np.matmul(self.h_trans, self.C_inv), self.h))
+        self.sigma = np.linalg.inv(np.matmul(np.matmul(self.H_trans, self.C_inv), self.H))
+        self.past_estimate = np.reshape(initial_position, (self.num_agents*2, 1))
+        print(self.sigma.shape)
+        print(self.h.shape)
 
-    def add_measurement(self, measurement):
-        measurement = super().add_measurement(measurement)
-        sigma = np.linalg.inv(np.matmul(np.matmul(self.H_trans, self.C_inv), self.H))
-        return measurement
-
-    def estimate(self, measurement):        
-        measurement = self.add_measurement(measurement)
+    def estimate(self, measurements):      
+        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")  
         # estimator update
-        K_num = np.matmul(self.sigma, self.h)
-        K_denom = self.C0 + np.matmul(np.matmul(self.h_trans, self.sigma), self.h)
+        K_num = np.matmul(self.sigma, self.h_trans)
+        K_denom = self.C0 + np.matmul(np.matmul(self.h, self.sigma), self.h_trans)
         K = np.matmul(K_num, np.linalg.inv(K_denom))
-        current_estimate = self.past_estimate + np.matmul(K, (measurement - np.matmul(np.transpose(self.h), self.past_estimates[:])))
+        print(self.past_estimate.shape)
+        current_estimate = self.past_estimate + np.matmul(K, (measurements - np.matmul(np.transpose(self.h_trans), self.past_estimate)))
 
-        self.add_estimate(current_estimate)
+        self.past_estimate = current_estimate
         return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
 
-# BLUE estimator. Currently does not converge
+# BLUE estimator
 class BLUE_Estimator(Estimator):
+    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
+        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T)
+
+    def estimate(self, measurements):
+        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
+        H_trans_C_inv = np.matmul(self.H_trans, self.C_inv)
+        est1 = np.linalg.inv(np.matmul(H_trans_C_inv, self.H))
+        est2 = np.matmul(est1, H_trans_C_inv)
+        current_estimate = np.matmul(est2, measurements)
+        return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
+
+
+# BLUE estimator. Currently does not converge
+class BLUE_Estimator2(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
         super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T)
         R = self.noise_cov
@@ -186,6 +195,8 @@ class Kalman(Estimator):
         for agent in range(self.num_agents):
             positions_estimate[agent] = self.estimators[agent].get_current_state()
         return positions_estimate
+    
+
 class KalmanFilter2D:
     def __init__(self, initial_state, initial_covariance, process_noise_cov, measurement_noise_cov):
         """

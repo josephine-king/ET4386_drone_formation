@@ -50,7 +50,6 @@ class Estimator:
             h_n = np.matmul(self.h_inv, measurement)
             self.x_n[t] = (np.reshape(h_n, (self.num_agents, 2), order="C"))
             
-    #return estimate
     def estimate(self):
         # average - benchmark
         x_tilda = np.zeros((self.num_agents,2))
@@ -70,27 +69,6 @@ class LS_Estimator(Estimator):
         return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
 
 
-# Attempt at an SLS Estimator. Currently not working at all
-class SLS_Estimator(Estimator):
-    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
-        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T) 
-        self.sigma = np.linalg.inv(np.matmul(np.matmul(self.H_trans, self.C_inv), self.H))
-        self.past_estimate = np.reshape(initial_position, (self.num_agents*2, 1))
-        print(self.sigma.shape)
-        print(self.h.shape)
-
-    def estimate(self, measurements):      
-        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")  
-        # estimator update
-        K_num = np.matmul(self.sigma, self.h_trans)
-        K_denom = self.C0 + np.matmul(np.matmul(self.h, self.sigma), self.h_trans)
-        K = np.matmul(K_num, np.linalg.inv(K_denom))
-        print(self.past_estimate.shape)
-        current_estimate = self.past_estimate + np.matmul(K, (measurements - np.matmul(np.transpose(self.h_trans), self.past_estimate)))
-
-        self.past_estimate = current_estimate
-        return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
-
 # BLUE estimator
 class BLUE_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
@@ -99,73 +77,10 @@ class BLUE_Estimator(Estimator):
     def estimate(self, measurements):
         measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
         H_trans_C_inv = np.matmul(self.H_trans, self.C_inv)
-        est1 = np.linalg.inv(np.matmul(H_trans_C_inv, self.H))
+        est1 = np.linalg.inv(np.matmul(H_trans_C_inv, self.H) + 1e-6*np.identity(self.num_agents*2))
         est2 = np.matmul(est1, H_trans_C_inv)
         current_estimate = np.matmul(est2, measurements)
         return (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
-
-
-# BLUE estimator. Currently does not converge
-class BLUE_Estimator2(Estimator):
-    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
-        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T)
-        R = self.noise_cov
-        num_meas = self.T
-
-        # Construct R_big (20x20)
-        R_big = np.kron(np.eye(num_meas), R)
-        self.R_big_inv = np.linalg.inv(R_big)
-
-        # Construct H_big (20x2)
-        # For each measurement i, rows (2*i) and (2*i+1):
-        #   (2*i)   -> dimension 1 of measurement i: [1, 0]
-        #   (2*i+1) -> dimension 2 of measurement i: [0, 1]
-        self.H_big = np.zeros((2*num_meas, 2))
-        for i in range(num_meas):
-            self.H_big[2*i, 0] = 1
-            self.H_big[2*i+1, 1] = 1
-        
-        self.inv_part = np.linalg.inv(self.H_big.T @ self.R_big_inv @ self.H_big)
-
-        self.BLUE_coef = self.inv_part @ (self.H_big.T @ self.R_big_inv)
-
-    def process_data(self, measurement_block):
-        #finds the relative positions based on block measurment
-        return super().process_data(measurement_block)
-    #average
-    # def estimate(self,measurements):
-       
-    #     th = np.zeros_like(measurements[1,:,:])
-    #     for t in range(len(th)):
-    #         x = measurements[:,t,:]
-    #         H = np.ones((10,1))
-    #         den = np.linalg.inv(H.T @ H)
-    #         avg = den @ H.T @ x
-    #         th[t] = avg
-    #     measurement = th
-    #     measurement = np.reshape(measurement, (self.num_edges*2*2, 1), order="C") 
-    #     h_n = np.matmul(self.h_inv, measurement)
-    #     return np.reshape(h_n,(7,2))
-
-    def estimate(self, measurements):
-
-        T = measurements.shape[1]
-        th = np.zeros((T, 2))
-        # loops over each relative position to get an estimate based on covariance
-        for t in range(T):
-
-            x_t = measurements[:, t, :].reshape(self.T, 2)
-            x_t = x_t.flatten(order='C').reshape(-1, 1)
-
-            # Apply BLUE estimator
-            # theta_hat = (H_big^T R_big_inv H_big)^{-1} H_big^T R_big_inv x_t
-            theta_hat =  self.BLUE_coef @ x_t
-            th[t, :] = theta_hat.ravel()
-
-        # convert into agent positions
-        measurement = th.reshape((self.num_edges * 2 * 2, 1), order="C")
-        h_n = self.h_inv @ measurement
-        return h_n.reshape((7,2))
 
 class Kalman(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T):
@@ -195,7 +110,49 @@ class Kalman(Estimator):
         for agent in range(self.num_agents):
             positions_estimate[agent] = self.estimators[agent].get_current_state()
         return positions_estimate
-    
+
+class Kalman_Estimator(Estimator):
+    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
+        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T)
+        self.initial_position = np.reshape(initial_position, (num_agents * 2, 1), order="C")
+        self.state_estimate = np.reshape(initial_position, (num_agents * 2, 1), order="C")
+        self.state_cov = np.identity(num_agents * 2) * 1e-3
+        self.measurement_cov = self.C
+        self.transition_matrix = np.identity(num_agents*2)
+        self.measurement_matrix = self.H
+        self.weights = weights
+        self.DT = DT
+
+    def compute_control(self, estimate):
+        estimate = np.reshape(estimate, (self.num_agents, 2), order="C")
+        control_inputs = np.zeros((self.num_agents, 2))
+        for i,j in self.connections:
+            weighted_position_diff = (estimate[i] - estimate[j]) * self.weights[i, j]
+            control_inputs[i] += weighted_position_diff
+        return np.reshape(control_inputs, (self.num_agents*2, 1), order="C")
+
+    def estimate(self, measurements):
+        # Reshape measurements
+        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
+
+        # Prediction step
+        predicted_state = self.state_estimate
+        control_inputs = self.compute_control(self.state_estimate)
+        predicted_state[6:] += self.DT*control_inputs[6:]
+
+        # Update step
+        S = np.matmul(np.matmul(self.H, self.state_cov), self.H_trans) + self.measurement_cov  # Innovation covariance
+        K = np.matmul(np.matmul(self.state_cov, self.H_trans), np.linalg.pinv(S))  # Kalman gain
+
+        innovation = measurements - np.matmul(self.H, predicted_state)
+        self.state_estimate = predicted_state + np.matmul(K, innovation)
+        self.state_cov = np.matmul(np.identity(self.state_cov.shape[0]) - np.matmul(K, self.H), self.state_cov)
+
+        self.state_estimate[0:6] = self.initial_position[0:6]
+
+        # Reshape state estimate to return as (num_agents x 2)
+        return np.reshape(self.state_estimate, (self.num_agents, 2), order="C")
+
 
 class KalmanFilter2D:
     def __init__(self, initial_state, initial_covariance, process_noise_cov, measurement_noise_cov):

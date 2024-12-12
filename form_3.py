@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, LS_Estimator, BLUE_Estimator, BLUE_Estimator2, KalmanFilter2D, Kalman
+from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator
 
 # === Global Variables ===
 DATA_FILE = 'data.mat'
@@ -9,7 +9,7 @@ NUM_AGENTS = 7
 NUM_EDGES = 12
 DT = 0.2
 TOTAL_TIME = 180  # seconds
-NOISE_EN = False
+NOISE_EN = True
 DEBUG_PRINTS = False
 T = 1
 
@@ -129,7 +129,7 @@ def main():
         exit(1)
 
     # Set up estimator 
-    estimator = BLUE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T)
+    estimator = Kalman_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T, weights, DT)
     # # # Create a list to hold the Kalman Filter instances
     # estimators = []
 

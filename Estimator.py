@@ -39,13 +39,27 @@ class Estimator:
         self.C_inv = np.linalg.inv(self.C)
             
     def fill_in_known_nodes(self, estimate):
-        for i in self.known_nodes:
-            estimate[i*2:i*2+2] = self.initial_position[i*2:i*2+2]
+        # for i in self.known_nodes:
+        #     estimate[i*2:i*2+2] = self.initial_position[i*2:i*2+2]
+        # for i in range(3):
+        #     estimate[i,:] = self.ini
         return estimate
 
     def estimate(self, measurements):
         pass
         
+class MLE_Estimator(Estimator):
+    def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
+        super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT) 
+        ones = np.ones((self.T,1))
+        self.H = np.kron(ones.T,self.h_inv)
+        
+    def estimate(self,measurements):
+        measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
+        
+        estimate = np.matmul(self.H ,measurements)/self.T
+        return (np.reshape(estimate, (self.num_agents, 2), order="C"))
+    
 
 class LS_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
@@ -63,23 +77,25 @@ class LS_Estimator(Estimator):
 class BLUE_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
         super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT)
+        H_trans_C_inv = np.matmul(self.H_trans, self.C_inv)
+        denom = np.linalg.inv(np.matmul(H_trans_C_inv, self.H) + 1e-6*np.identity(self.num_agents*2))
+        self.BLUE = np.matmul(denom, H_trans_C_inv)
+
 
     def estimate(self, measurements):
         measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
-        H_trans_C_inv = np.matmul(self.H_trans, self.C_inv)
-        est1 = np.linalg.inv(np.matmul(H_trans_C_inv, self.H) + 1e-6*np.identity(self.num_agents*2))
-        est2 = np.matmul(est1, H_trans_C_inv)
-        current_estimate = np.matmul(est2, measurements)
+        current_estimate = np.matmul(self.BLUE, measurements)
         current_estimate = (np.reshape(current_estimate, (self.num_agents, 2), order="C"))
-        current_estimate = self.fill_in_known_nodes(current_estimate)
         return current_estimate
+    
 
 class Kalman_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
         super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT)
         self.initial_position = np.reshape(initial_position, (num_agents * 2, 1), order="C")
         self.state_estimate = np.reshape(initial_position, (num_agents * 2, 1), order="C")
-        self.state_cov = np.identity(num_agents * 2) * 1e-3
+        cov = np.eye(num_agents)
+        self.state_cov = np.kron(cov,self.noise_cov)
         self.measurement_cov = self.C
         self.transition_matrix = np.identity(num_agents*2)
         self.measurement_matrix = self.H

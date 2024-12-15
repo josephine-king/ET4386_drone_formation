@@ -1,17 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator
-
+from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator,MLE_Estimator
+from scipy.spatial import procrustes
 # === Global Variables ===
 DATA_FILE = 'data.mat'
 NUM_AGENTS = 7
 NUM_EDGES = 12
 DT = 0.2
-TOTAL_TIME = 180  # seconds
+TOTAL_TIME = 100  # seconds
 NOISE_EN = True
 DEBUG_PRINTS = False
-T = 1
+T = 30
 
 def load_and_initialize(file_path, num_agents, dt, total_time):
     # Load desired positions from the data file
@@ -120,8 +120,6 @@ def setup_plot(num_agents, adjacency):
     ax3.set_xlabel('Time (s)')
     ax3.set_ylabel('MSE')
     mse_res_line, = ax3.plot([], [], color='red')
-    ax3.set_xlim(0, 10)  # Will adjust dynamically
-    ax3.set_ylim(0, 1)  # Initial guess; will adjust dynamically
    # Initialize MSE data
     mse_res_data_x = []
     mse_res_data_y = []
@@ -141,7 +139,7 @@ def main():
         exit(1)
 
     # Set up estimator 
-    estimator = Kalman_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T, weights, DT)
+    estimator = MLE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T, weights, DT)
 
     # === Setup Plot ===
     fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y, fig3, ax3, mse_res_line, mse_res_data_x, mse_res_data_y = setup_plot(NUM_AGENTS, adjacency)
@@ -189,8 +187,8 @@ def main():
         control_inputs = compute_control(estimate, connections, weights)
 
         # === MSE Calculation ===
-        mse_residual = compute_mse(estimate,positions)
-
+        # mse_residual = compute_mse(estimate,positions)
+        _, _, mse_residual = procrustes(estimate, positions)
         # Update positions
         for agent in [3,4,5,6]:
             # if (DEBUG_PRINTS):
@@ -200,10 +198,10 @@ def main():
         
 
         # Update traces
-        update_traces(traces, estimate)
+        update_traces(traces, positions)
 
         # Update scatter plot
-        scatter.set_offsets(estimate)
+        scatter.set_offsets(positions)
 
 
         # Update traces
@@ -214,7 +212,7 @@ def main():
         # Update connection lines
         for connection in connection_lines:
             line, i, j = connection
-            line.set_data([estimate[i, 0], estimate[j, 0]], [estimate[i, 1], estimate[j, 1]])
+            line.set_data([positions[i, 0], positions[j, 0]], [positions[i, 1], positions[j, 1]])
 
 
         # === MSE Calculation ===
@@ -254,7 +252,7 @@ def main():
     fig2.canvas.draw()
 
      # Adjust MSE plot limits dynamically if necessary
-    ax3.set_ylim(0,max(mse_residual_history)*1.1)
+    # ax3.set_ylim(0,max(mse_residual_history)*1.1)
     if current_time > ax3.get_xlim()[1]:
         ax3.set_xlim(0, current_time + TOTAL_TIME * 0.1)  # Extend X-axis by 10% of TOTAL_TIME
         ax3.figure.canvas.draw()

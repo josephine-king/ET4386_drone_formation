@@ -1,15 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator,MLE_Estimator
+from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator, MLE_Estimator
 from scipy.spatial import procrustes
+
 # === Global Variables ===
 DATA_FILE = 'data.mat'
 NUM_AGENTS = 7
 NUM_EDGES = 12
-NOISE_EN = False
+NOISE_EN = True
 DEBUG_PRINTS = False
-T = 30
+T_vals = [1,5,10,20]
+PLOT_POSITIONS = False
+ERR_THRESHOLD = 0.1
 
 def load_and_initialize():
     # Load desired positions from the data file
@@ -40,13 +43,11 @@ def load_and_initialize():
         adjacency[i, j] = 1
 
     positions = data['z'].reshape(NUM_AGENTS, 2)  # Random initial positions
-    steps = np.ndarray.item(data['K'])*15
-    dt = np.ndarray.item(data['dt'])
+    steps = np.ndarray.item(data['K'])
+    dt = np.ndarray.item(data['dt'])*10
     traces = [np.empty((0, 2)) for _ in range(NUM_AGENTS)]
-    mse_history = []  # Initialize MSE history list
-    mse_residual_history = []
     
-    return desired_positions, positions, noise_cov, weights, traces, steps, dt, connections, adjacency, mse_history,mse_residual_history
+    return desired_positions, positions, noise_cov, weights, traces, steps, dt, connections, adjacency
 
 #get raw relative position data.
 def get_T_measurements(positions, connections, noise_cov,T):
@@ -59,7 +60,6 @@ def get_T_measurements(positions, connections, noise_cov,T):
             # Compute the position difference between the two agents and add noise
             measurements[t][m] = positions[i] - positions[j] + noise
     return measurements
-
 
 def compute_control(estimate, connections, weights):
     control_inputs = np.zeros((NUM_AGENTS, 2))
@@ -80,7 +80,32 @@ def update_traces(traces, positions):
     for idx in range(len(traces)):
         traces[idx] = np.vstack((traces[idx], positions[idx]))
 
-def setup_plot(num_agents, adjacency):
+def setup_error_plots(steps):
+    fig2, ax2 = plt.subplots(figsize=(6, 4))
+    ax2.set_title('Error between true positions and desired positions')
+    ax2.set_xlabel('Time step')
+    ax2.set_ylabel('Error')
+    ax2.set_xlim(0, 10) 
+    ax2.set_ylim(0, 100)  
+    error_data_x = []
+    error_data_y = []
+
+    fig3, ax3 = plt.subplots(figsize=(6, 4))
+    ax3.set_title('Error between true positions and estimated positions')
+    ax3.set_xlabel('Time step')
+    ax3.set_ylabel('Error')
+    estimate_error_data_x = []
+    estimate_error_data_y = []
+
+    # Initialize MSE plot
+    ax2.set_xlim(0, steps)
+    ax2.set_ylim(0, 60)  
+    fig3.show()
+    fig2.show()
+
+    return fig2, ax2, error_data_x, error_data_y, fig3, ax3, estimate_error_data_x, estimate_error_data_y
+
+def setup_plot(num_agents, adjacency, positions, desired_positions):
     # === Agent Positions Plot ===
     fig1, ax1 = plt.subplots(figsize=(8, 8))
     ax1.set_xlim(0, 10)
@@ -101,45 +126,7 @@ def setup_plot(num_agents, adjacency):
     scatter = ax1.scatter([], [], color='blue', zorder=3)
     colors = plt.cm.get_cmap('hsv', num_agents)
     lines = [ax1.plot([], [], linestyle='-', linewidth=1, alpha=0.7, color=colors(idx), zorder=2)[0] for idx in range(num_agents)]
-    
-    # === MSE Plot ===
-    fig2, ax2 = plt.subplots(figsize=(6, 4))
-    ax2.set_title('Error over time')
-    ax2.set_xlabel('Time step')
-    ax2.set_ylabel('Error')
-    mse_line, = ax2.plot([], [], color='red')
-    ax2.set_xlim(0, 10)  # Will adjust dynamically
-    ax2.set_ylim(0, 100)  # Initial guess; will adjust dynamically
-    # Initialize MSE data
-    mse_data_x = []
-    mse_data_y = []
 
-    fig3, ax3 = plt.subplots(figsize=(6, 4))
-    ax3.set_title('estimated position and real position MSE')
-    ax3.set_xlabel('Time (s)')
-    ax3.set_ylabel('MSE')
-    mse_res_line, = ax3.plot([], [], color='red')
-   # Initialize MSE data
-    mse_res_data_x = []
-    mse_res_data_y = []
-    
-    
-    return fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y, fig3, ax3, mse_res_line, mse_res_data_x, mse_res_data_y
-
-def main():
-
-    # === Load Data and Initialize ===
-    try:
-        desired_positions, positions, noise_cov, weights, traces, steps, dt, connections, adjacency, mse_history,mse_residual_history = load_and_initialize()
-    except Exception as e:
-        print(f"Initialization Error: {e}")
-        exit(1)
-
-    # Set up estimator 
-    estimator = MLE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, positions, T, weights, dt)
-
-    # === Setup Plot ===
-    fig1, ax1, scatter, lines, connection_lines, fig2, ax2, mse_line, mse_data_x, mse_data_y, fig3, ax3, mse_res_line, mse_res_data_x, mse_res_data_y = setup_plot(NUM_AGENTS, adjacency)
     scatter.set_offsets(positions)
     # Plot desired positions in grey
     ax1.scatter(desired_positions[3:7, 0], desired_positions[3:7, 1], c='grey', s=30, marker='x', label="Desired Positions")
@@ -153,12 +140,26 @@ def main():
     for idx, line in enumerate(lines):
         line.set_data([], [])
 
-    # Initialize MSE plot
-    ax2.set_xlim(0, steps)
-    ax2.set_ylim(0, 60)  # Adjust based on expected MSE range
-    fig3.show()
-    fig2.show()
     fig1.show()
+    
+    return fig1, ax1, scatter, lines, connection_lines
+
+def main():
+
+    # === Load Data and Initialize ===
+    try:
+        desired_positions, initial_positions, noise_cov, weights, traces, steps, dt, connections, adjacency = load_and_initialize()
+    except Exception as e:
+        print(f"Initialization Error: {e}")
+        exit(1)
+
+    # === Setup Plots ===
+    if (PLOT_POSITIONS == True):
+        fig1, ax1, scatter, lines, connection_lines = setup_plot(NUM_AGENTS, adjacency, initial_positions, desired_positions)
+    fig2, ax2, error_data_x, error_data_y, fig3, ax3, estimate_error_data_x, estimate_error_data_y = setup_error_plots(steps)
+    max_error = 0
+    steps_to_err_threshold = []
+    total_u_used = []
 
     # === Simulation Control Flag ===
     running = True
@@ -167,97 +168,105 @@ def main():
         if event.key == 'escape':
             running = False
 
-    fig1.canvas.mpl_connect('key_press_event', on_key)
+    if (PLOT_POSITIONS == True):
+        fig1.canvas.mpl_connect('key_press_event', on_key)
     fig2.canvas.mpl_connect('key_press_event', on_key)
     fig3.canvas.mpl_connect('key_press_event', on_key)
-    # === Simulation Loop ===
-    for step in range(steps):
-        if not running:
-            print("Simulation terminated by user.")
-            break
-       
-        # Get measurements
-        measurements_block = get_T_measurements(positions, connections, noise_cov,T)
-        estimate = estimator.estimate(measurements_block)
-        control_inputs = compute_control(estimate, connections, weights)
 
-        # === MSE Calculation ===
-        # mse_residual = compute_error(estimate,positions)
-        _, _, mse_residual = procrustes(estimate, positions)
-        # Update positions
-        for agent in [3,4,5,6]:
-            # if (DEBUG_PRINTS):
-            #     print(f"Agent: {agent}, old position: {positions[agent]}, new position: {positions_estimate[agent]+control_inputs[agent]}, desired position: {desired_positions[agent]}")
-            positions[agent] += control_inputs[agent] * dt
-
+    for idx in range(0, len(T_vals)):
         
+        T = T_vals[idx] 
+        error_history = []  # Initialize MSE history list
+        estimate_error_history = []
+        u_used = 0
+        positions = np.matrix.copy(initial_positions)
+        print("Running T = ", T)
 
-        # Update traces
-        update_traces(traces, positions)
+        # Set up estimator 
+        estimator = BLUE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, initial_positions, T, weights, dt)
 
-        # Update scatter plot
-        scatter.set_offsets(positions)
+        # === Simulation Loop ===
+        for step in range(steps):
+            if not running:
+                print("Simulation terminated by user.")
+                break
+            
+            # Get measurements
+            measurements_block = get_T_measurements(positions, connections, noise_cov,T)
+            estimate = estimator.estimate(measurements_block)
+            control_inputs = compute_control(estimate, connections, weights)
+            u_used += np.sum(np.abs(control_inputs))
 
+            # Calculate the error between the estimate and the true positions
+            _, _, estimate_error = procrustes(estimate, positions)
+            estimate_error_history.append(estimate_error)
 
-        # Update traces
-        for idx, line in enumerate(lines):
-            if traces[idx].size > 0:
-                line.set_data(traces[idx][:, 0], traces[idx][:, 1])
+            # Update positions
+            for agent in [3,4,5,6]:
+                positions[agent] += control_inputs[agent] * dt
+            
+            if (PLOT_POSITIONS == True):
+                # Update traces
+                update_traces(traces, positions)
 
-        # Update connection lines
-        for connection in connection_lines:
-            line, i, j = connection
-            line.set_data([positions[i, 0], positions[j, 0]], [positions[i, 1], positions[j, 1]])
+                # Update plot
+                scatter.set_offsets(positions)
+                for idx, line in enumerate(lines):
+                    if traces[idx].size > 0:
+                        line.set_data(traces[idx][:, 0], traces[idx][:, 1])
+                for connection in connection_lines:
+                    line, i, j = connection
+                    line.set_data([positions[i, 0], positions[j, 0]], [positions[i, 1], positions[j, 1]])
 
+            # === Error Calculations ===
+            error = compute_error(positions, desired_positions)
+            error_history.append(error)
+            if (error < ERR_THRESHOLD and len(steps_to_err_threshold) <= idx):
+                steps_to_err_threshold.append(step)
+                    
+        if (PLOT_POSITIONS == True):
+            max_range = max(np.abs(positions).max()*1.3, 1e-3)  # Prevent zero range errors
+            ax1.set_xlim(-max_range, max_range+0.5)
+            ax1.set_ylim(-max_range, max_range)
+            ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
+            ax1.figure.canvas.draw()
+            fig1.canvas.draw()
 
-        # === MSE Calculation ===
-        mse = compute_error(positions, desired_positions)
-        mse_history.append(mse)
-        mse_data_x.append(step)
-        mse_data_y.append(mse)
+        max_error = max(max(error_history), max_error)
+        ax2.plot(range(steps), error_history, label=f"T = {T}")
+        ax3.plot(range(steps), estimate_error_history, label=f"T = {T}")
+        total_u_used.append(u_used)
 
-        mse_residual_history.append(mse_residual)
-        mse_res_data_x.append(step)
-        mse_res_data_y.append(mse_residual)
-        
-        
-    max_range = max(np.abs(positions).max()*1.3, 1e-3)  # Prevent zero range errors
-    ax1.set_xlim(-max_range, max_range+0.5)
-    ax1.set_ylim(-max_range, max_range)
-    ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
-    ax1.figure.canvas.draw()
-    # Redraw the plots
-    fig1.canvas.draw()
-    
-    # plt.pause(0.001)
-
-    # Update MSE plot data
-    mse_line.set_data(mse_data_x, mse_data_y)
-   # Update MSE plot data
-    mse_res_line.set_data(mse_res_data_x, mse_res_data_y)
-    
-    # Adjust MSE plot limits dynamically if necessary
-    ax2.set_ylim(0,max(mse_history))
+    # Adjust error plot limits dynamically if necessary
+    ax2.set_ylim(0,max_error)
     if step > ax2.get_xlim()[1]:
-        ax2.set_xlim(0, step + steps * 0.1)  # Extend X-axis by 10% of total steps
+        ax2.set_xlim(0, step + steps * 0.1)
         ax2.figure.canvas.draw()
-    if mse > ax2.get_ylim()[1]:
-        # ax2.set_ylim(0, mse * 1.1)  # Extend Y-axis to 10% above current MSE
+    if error > ax2.get_ylim()[1]:
         ax2.figure.canvas.draw()
+    ax2.legend()
     fig2.canvas.draw()
 
-     # Adjust MSE plot limits dynamically if necessary
-    # ax3.set_ylim(0,max(mse_residual_history)*1.1)
+    # Adjust error plot limits dynamically if necessary
     if step > ax3.get_xlim()[1]:
-        ax3.set_xlim(0, step + steps * 0.1)  # Extend X-axis by 10% of total steps
+        ax3.set_xlim(0, step + steps * 0.1) 
         ax3.figure.canvas.draw()
-    if mse > ax3.get_ylim()[1]:
-        # ax2.set_ylim(0, mse * 1.1)  # Extend Y-axis to 10% above current MSE
+    if error > ax3.get_ylim()[1]:
         ax3.figure.canvas.draw()
+    ax3.legend()
     fig3.canvas.draw()
+
+    print("Time steps to converge to ", ERR_THRESHOLD, " error")
+    for idx in range(0, len(T_vals)):
+        print("T = ", T_vals[idx], ": ", steps_to_err_threshold[idx])
+
+    print("Total input used: ")
+    for idx in range(0, len(T_vals)):
+        print("T = ", T_vals[idx], ": ", total_u_used[idx])
+    
     # === Final Visualization ===
     plt.show()
-    print("total mse: ",sum(mse_history))
+
 if __name__ == "__main__":
     main()
 

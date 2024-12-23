@@ -13,6 +13,8 @@ DEBUG_PRINTS = False
 T_vals = [1,5,10,20]
 PLOT_POSITIONS = False
 ERR_THRESHOLD = 0.1
+ESTIMATOR = BLUE_Estimator
+USE_ESTIMATOR = True
 
 def load_and_initialize():
     # Load desired positions from the data file
@@ -68,6 +70,14 @@ def compute_control(estimate, connections, weights):
         control_inputs[i] += weighted_position_diff
     return control_inputs
 
+def compute_control_noise(estimate, connections, weights, noise_cov):
+    control_inputs = np.zeros((NUM_AGENTS, 2))
+    for i,j in connections:
+        noise = np.random.multivariate_normal(np.zeros_like(estimate[i]), noise_cov) if NOISE_EN else 0
+        weighted_position_diff = (estimate[i] - estimate[j] + noise) * weights[i, j]
+        control_inputs[i] += weighted_position_diff
+    return control_inputs
+
 def compute_error(positions, desired_positions):
     squared_errors = []
     for agent in range(NUM_AGENTS):
@@ -82,24 +92,23 @@ def update_traces(traces, positions):
 
 def setup_error_plots(steps):
     fig2, ax2 = plt.subplots(figsize=(6, 4))
-    ax2.set_title('Error between true positions and desired positions')
+    ax2.set_title('{name}: Error between true and desired positions'.format(name = ESTIMATOR.__name__))
     ax2.set_xlabel('Time step')
     ax2.set_ylabel('Error')
-    ax2.set_xlim(0, 10) 
-    ax2.set_ylim(0, 100)  
+    ax2.set_xlim(0, steps)
+    ax2.set_ylim(0, 60)  
     error_data_x = []
     error_data_y = []
 
     fig3, ax3 = plt.subplots(figsize=(6, 4))
-    ax3.set_title('Error between true positions and estimated positions')
+    ax3.set_title('{name}: Error between true and estimated positions'.format(name = ESTIMATOR.__name__))
     ax3.set_xlabel('Time step')
     ax3.set_ylabel('Error')
+    ax3.set_xlim(-5, steps)
+    ax3.set_ylim(-.001, 0.03) 
     estimate_error_data_x = []
     estimate_error_data_y = []
 
-    # Initialize MSE plot
-    ax2.set_xlim(0, steps)
-    ax2.set_ylim(0, 60)  
     fig3.show()
     fig2.show()
 
@@ -107,9 +116,9 @@ def setup_error_plots(steps):
 
 def setup_plot(num_agents, adjacency, positions, desired_positions):
     # === Agent Positions Plot ===
-    fig1, ax1 = plt.subplots(figsize=(8, 8))
-    ax1.set_xlim(0, 10)
-    ax1.set_ylim(0, 10)
+    fig1, ax1 = plt.subplots(figsize=(6, 4))
+    ax1.set_xlim(-3+0.75, 3)
+    ax1.set_ylim(-2.2, 1.3)
     ax1.set_title('Drone position trajectories')
     ax1.set_xlabel('X Position')
     ax1.set_ylabel('Y Position')
@@ -180,10 +189,10 @@ def main():
         estimate_error_history = []
         u_used = 0
         positions = np.matrix.copy(initial_positions)
-        print("Running T = ", T)
 
         # Set up estimator 
-        estimator = BLUE_Estimator(NUM_AGENTS, NUM_EDGES, connections, noise_cov, initial_positions, T, weights, dt)
+        estimator = ESTIMATOR(NUM_AGENTS, NUM_EDGES, connections, noise_cov, initial_positions, T, weights, dt)
+        print("Running ", type(estimator).__name__, "with T = ", T)
 
         # === Simulation Loop ===
         for step in range(steps):
@@ -192,14 +201,20 @@ def main():
                 break
             
             # Get measurements
-            measurements_block = get_T_measurements(positions, connections, noise_cov,T)
-            estimate = estimator.estimate(measurements_block)
-            control_inputs = compute_control(estimate, connections, weights)
-            u_used += np.sum(np.abs(control_inputs))
-
-            # Calculate the error between the estimate and the true positions
-            _, _, estimate_error = procrustes(estimate, positions)
-            estimate_error_history.append(estimate_error)
+            if (USE_ESTIMATOR == True):
+                measurements_block = get_T_measurements(positions, connections, noise_cov,T)
+                estimate = estimator.estimate(measurements_block)
+                control_inputs = compute_control(estimate, connections, weights)
+                u_used += np.sum(np.abs(control_inputs))
+                # Calculate the error between the estimate and the true positions
+                _, _, estimate_error = procrustes(estimate, positions)
+                estimate_error_history.append(estimate_error)
+            else: 
+                if (NOISE_EN == True):
+                    control_inputs = compute_control_noise(positions, connections, weights, noise_cov)
+                else:
+                    control_inputs = compute_control(positions, connections, weights)
+                u_used += np.sum(np.abs(control_inputs))
 
             # Update positions
             for agent in [3,4,5,6]:
@@ -225,17 +240,15 @@ def main():
                 steps_to_err_threshold.append(step)
                     
         if (PLOT_POSITIONS == True):
-            max_range = max(np.abs(positions).max()*1.3, 1e-3)  # Prevent zero range errors
-            ax1.set_xlim(-max_range, max_range+0.5)
-            ax1.set_ylim(-max_range, max_range)
             ax1.set_aspect('equal', adjustable='datalim')  # Ensure equal scaling
             ax1.figure.canvas.draw()
             fig1.canvas.draw()
 
+        total_u_used.append(u_used)
         max_error = max(max(error_history), max_error)
         ax2.plot(range(steps), error_history, label=f"T = {T}")
-        ax3.plot(range(steps), estimate_error_history, label=f"T = {T}")
-        total_u_used.append(u_used)
+        if (USE_ESTIMATOR == True):
+            ax3.plot(range(steps), estimate_error_history, label=f"T = {T}")
 
     # Adjust error plot limits dynamically if necessary
     ax2.set_ylim(0,max_error)
@@ -247,14 +260,15 @@ def main():
     ax2.legend()
     fig2.canvas.draw()
 
-    # Adjust error plot limits dynamically if necessary
-    if step > ax3.get_xlim()[1]:
-        ax3.set_xlim(0, step + steps * 0.1) 
-        ax3.figure.canvas.draw()
-    if error > ax3.get_ylim()[1]:
-        ax3.figure.canvas.draw()
-    ax3.legend()
-    fig3.canvas.draw()
+    if (USE_ESTIMATOR == True):
+        # Adjust error plot limits dynamically if necessary
+        if step > ax3.get_xlim()[1]:
+            ax3.set_xlim(0, step + steps * 0.1) 
+            ax3.figure.canvas.draw()
+        if error > ax3.get_ylim()[1]:
+            ax3.figure.canvas.draw()
+        ax3.legend()
+        fig3.canvas.draw()
 
     print("Time steps to converge to ", ERR_THRESHOLD, " error")
     for idx in range(0, len(T_vals)):

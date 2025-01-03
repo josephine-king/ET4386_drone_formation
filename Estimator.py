@@ -37,16 +37,20 @@ class Estimator:
     def estimate(self, measurements):
         pass
         
-class MLE_Estimator(Estimator):
+class Average_Estimator(Estimator):
     def __init__(self, num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT):
         super().__init__(num_agents, num_edges, connections, noise_cov, initial_position, T, weights, DT) 
-        ones = np.ones((self.T,1))
-        self.HT = np.kron(ones.T,self.H_inv)
+        ones = np.ones((1,self.T))
+        print(ones.shape)
+        self.HT = np.kron(ones,self.H_inv)
         
     def estimate(self,measurements):
         measurements = np.reshape(measurements, (self.num_edges*2*2*self.T, 1), order="C")
-        
+        #print(np.matmul(self.HT ,measurements))
         estimate = np.matmul(self.HT ,measurements)/self.T
+        #print(self.HT.shape)
+        #rint(self.H_inv.shape)
+        #print(estimate)
         return (np.reshape(estimate, (self.num_agents, 2), order="C"))
     
 

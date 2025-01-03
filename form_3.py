@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator, MLE_Estimator
+from Estimator import Estimator, LS_Estimator, BLUE_Estimator, Kalman_Estimator, Average_Estimator
 from scipy.spatial import procrustes
 
 # === Global Variables ===
@@ -10,10 +10,10 @@ NUM_AGENTS = 7
 NUM_EDGES = 12
 NOISE_EN = True
 DEBUG_PRINTS = False
-T_vals = [1,5,10,20]
-PLOT_POSITIONS = False
-ERR_THRESHOLD = 0.1
-ESTIMATOR = BLUE_Estimator
+T_vals = [5]
+PLOT_POSITIONS = True
+ERR_THRESHOLD = 0.5
+ESTIMATOR = Average_Estimator 
 USE_ESTIMATOR = True
 
 def load_and_initialize():
@@ -82,7 +82,7 @@ def compute_error(positions, desired_positions):
     squared_errors = []
     for agent in range(NUM_AGENTS):
         error = positions[agent] - desired_positions[agent]
-        squared_errors.append(np.linalg.norm(error)**2)
+        squared_errors.append(np.linalg.norm(error))
     error = np.sum(squared_errors) if squared_errors else 0
     return error
 
@@ -92,7 +92,10 @@ def update_traces(traces, positions):
 
 def setup_error_plots(steps):
     fig2, ax2 = plt.subplots(figsize=(6, 4))
-    ax2.set_title('{name}: Error between true and desired positions'.format(name = ESTIMATOR.__name__))
+    if (USE_ESTIMATOR == False):
+        ax2.set_title('Error between true and desired positions')
+    else:
+        ax2.set_title('{name}: Error between true and desired positions'.format(name = ESTIMATOR.__name__))
     ax2.set_xlabel('Time step')
     ax2.set_ylabel('Error')
     ax2.set_xlim(0, steps)
@@ -101,11 +104,15 @@ def setup_error_plots(steps):
     error_data_y = []
 
     fig3, ax3 = plt.subplots(figsize=(6, 4))
-    ax3.set_title('{name}: Error between true and estimated positions'.format(name = ESTIMATOR.__name__))
+    if (USE_ESTIMATOR == False):
+        ax3.set_title('Error between true and estimated positions')
+    else:
+        ax3.set_title('{name}: Error between true and estimated positions'.format(name = ESTIMATOR.__name__))
+
     ax3.set_xlabel('Time step')
     ax3.set_ylabel('Error')
     ax3.set_xlim(-5, steps)
-    ax3.set_ylim(-.001, 0.03) 
+    ax3.set_ylim(-.001, 0.18) 
     estimate_error_data_x = []
     estimate_error_data_y = []
 
@@ -119,7 +126,7 @@ def setup_plot(num_agents, adjacency, positions, desired_positions):
     fig1, ax1 = plt.subplots(figsize=(6, 4))
     ax1.set_xlim(-3+0.75, 3)
     ax1.set_ylim(-2.2, 1.3)
-    ax1.set_title('Drone position trajectories')
+    ax1.set_title('Drone position trajectories: {name}, T = 5'.format(name = ESTIMATOR.__name__))
     ax1.set_xlabel('X Position')
     ax1.set_ylabel('Y Position')
     
@@ -208,7 +215,7 @@ def main():
                 u_used += np.sum(np.abs(control_inputs))
                 # Calculate the error between the estimate and the true positions
                 _, _, estimate_error = procrustes(estimate, positions)
-                estimate_error_history.append(estimate_error)
+                estimate_error_history.append(np.sqrt(estimate_error))
             else: 
                 if (NOISE_EN == True):
                     control_inputs = compute_control_noise(positions, connections, weights, noise_cov)
